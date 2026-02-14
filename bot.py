@@ -90,7 +90,7 @@ class LevelModal(ui.Modal, title="Mise à jour du niveau"):
 class JobSelect(ui.Select):
     def __init__(self):
         options = [discord.SelectOption(label=m, value=m) for m in METIERS_DOFUS]
-        super().__init__(placeholder="Choisis un métier dans la liste...", min_values=1, max_values=1, options=options)
+        super().__init__(placeholder="Choisis un métier dans la liste...", min_values=1, max_values=1, options=options, custom_id="job_select")
 
     async def callback(self, interaction: discord.Interaction):
         await interaction.response.send_modal(LevelModal(self.values[0]))
