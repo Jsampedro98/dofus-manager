@@ -1,251 +1,196 @@
 import discord
-from discord import app_commands
+from discord import app_commands, ui
 from discord.ext import commands
 import json
 import os
 
 # --- CONFIGURATION ---
 TOKEN = os.getenv('DISCORD_TOKEN')
-FICHIER_SAUVEGARDE = 'artisans.json'
+
+# Gestion du fichier de sauvegarde (Local vs Serveur)
 if os.path.exists("/app/data"):
     FICHIER_SAUVEGARDE = "/app/data/artisans.json"
-# Liste des métiers valides sur Dofus (pour éviter les fautes de frappe)
+else:
+    FICHIER_SAUVEGARDE = "artisans.json"
+
 METIERS_DOFUS = [
-    "Paysan", "Alchimiste", "Bûcheron", "Mineur", 
+    "Paysan", "Boulanger", "Alchimiste", "Bûcheron", "Mineur", 
     "Chasseur", "Pêcheur", "Bricoleur", "Bijoutier", "Cordonnier", 
     "Tailleur", "Forgeron", "Sculpteur", "Joaillomage", "Cordomage", 
-    "Costumage", "Forgemage", "Sculptemage", "Façonneur", "Façomage"
+    "Costumage", "Forgemage", "Sculptemage", "Façonneur"
 ]
 
-# --- INITIALISATION ---
-intents = discord.Intents.default()
-intents.message_content = True
-intents.members = True # Important pour gérer les rôles
-
-class DofusBot(commands.Bot):
-    def __init__(self):
-        super().__init__(command_prefix="!", intents=intents)
-
-    async def setup_hook(self):
-        # Synchronise les commandes slash avec Discord au démarrage
-        await self.tree.sync()
-        print("Commandes synchronisées !")
-
-client = DofusBot()
-
-# Fonction pour charger/sauvegarder les données
+# --- FONCTIONS UTILES ---
 def load_data():
     if not os.path.exists(FICHIER_SAUVEGARDE):
         return {}
-    with open(FICHIER_SAUVEGARDE, 'r') as f:
-        return json.load(f)
+    try:
+        with open(FICHIER_SAUVEGARDE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
 
 def save_data(data):
     with open(FICHIER_SAUVEGARDE, 'w') as f:
         json.dump(data, f, indent=4)
 
-# --- COMMANDES ---
+# --- INTERFACE GRAPHIQUE (UI) ---
 
-@client.tree.command(name="metier", description="Met à jour ton niveau de métier (ex: /metier Paysan 200)")
-@app_commands.describe(nom_metier="Choisis le métier", niveau="Ton niveau (1-200)")
-@app_commands.choices(nom_metier=[
-    app_commands.Choice(name=m, value=m) for m in METIERS_DOFUS
-]) 
-async def update_metier(interaction: discord.Interaction, nom_metier: str, niveau: int):
-    # 1. Vérification du niveau
-    if niveau < 1 or niveau > 200:
-        await interaction.response.send_message("❌ Le niveau doit être compris entre 1 et 200.", ephemeral=True)
-        return
+# 1. La Fenêtre Pop-up (Pour entrer le niveau)
+class LevelModal(ui.Modal, title="Mise à jour du niveau"):
+    def __init__(self, metier_choisi):
+        super().__init__()
+        self.metier = metier_choisi
+        
+        # Le champ de texte pour le niveau
+        self.niveau_input = ui.TextInput(
+            label=f"Niveau de {metier_choisi} ?",
+            placeholder="Ex: 200",
+            min_length=1,
+            max_length=3,
+            required=True
+        )
+        self.add_item(self.niveau_input)
 
-    user_id = str(interaction.user.id)
-    guild = interaction.guild
-
-    # 2. Gestion du Rôle Discord (On donne juste le titre, ex: "Boulanger")
-    role_name = nom_metier
-    role = discord.utils.get(guild.roles, name=role_name)
-
-    # Si le rôle n'existe pas, on le crée
-    if not role:
-        try:
-            role = await guild.create_role(name=role_name, mentionable=True)
-        except discord.Forbidden:
-            await interaction.response.send_message("❌ Je n'ai pas la permission de créer des rôles.", ephemeral=True)
+    async def on_submit(self, interaction: discord.Interaction):
+        # C'est ici qu'on sauvegarde quand l'utilisateur clique sur "Valider"
+        niveau_str = self.niveau_input.value
+        
+        # Vérification que c'est bien un nombre
+        if not niveau_str.isdigit():
+            await interaction.response.send_message("❌ Le niveau doit être un nombre.", ephemeral=True)
+            return
+        
+        niveau = int(niveau_str)
+        if niveau < 1 or niveau > 200:
+            await interaction.response.send_message("❌ Le niveau doit être entre 1 et 200.", ephemeral=True)
             return
 
-    # On donne le rôle à l'utilisateur s'il ne l'a pas
-    if role not in interaction.user.roles:
-        try:
-            await interaction.user.add_roles(role)
-        except discord.Forbidden:
-             await interaction.response.send_message("❌ Je ne peux pas t'attribuer ce rôle (vérifie ma hiérarchie).", ephemeral=True)
-             return
+        # Sauvegarde
+        user_id = str(interaction.user.id)
+        data = load_data()
+        if user_id not in data:
+            data[user_id] = {}
+        
+        data[user_id][self.metier] = niveau
+        save_data(data)
 
-    # 3. Sauvegarde des données dans le fichier JSON
+        # Gestion du Rôle
+        guild = interaction.guild
+        role = discord.utils.get(guild.roles, name=self.metier)
+        
+        if not role:
+            # Création du rôle si inexistant (avec gestion d'erreur)
+            try:
+                role = await guild.create_role(name=self.metier, mentionable=True)
+            except discord.Forbidden:
+                await interaction.response.send_message(f"✅ Niveau enregistré, mais je n'ai pas la perm de créer le rôle {self.metier}.", ephemeral=True)
+                return
+
+        if role not in interaction.user.roles:
+            try:
+                await interaction.user.add_roles(role)
+            except discord.Forbidden:
+                pass # Pas grave si on peut pas mettre le rôle, on a sauvegardé le niveau
+
+        await interaction.response.send_message(f"✅ **{self.metier}** mis à jour au niveau **{niveau}** !", ephemeral=True)
+
+# 2. Le Menu Déroulant (Pour choisir le métier)
+class JobSelect(ui.Select):
+    def __init__(self):
+        # On crée les options du menu à partir de notre liste
+        options = [discord.SelectOption(label=m, value=m) for m in METIERS_DOFUS]
+        # Attention : Discord limite à 25 options max (on en a 19, c'est bon !)
+        super().__init__(placeholder="Choisis un métier dans la liste...", min_values=1, max_values=1, options=options)
+
+    async def callback(self, interaction: discord.Interaction):
+        # Quand l'utilisateur choisit une option, on ouvre la Modal
+        metier_choisi = self.values[0]
+        await interaction.response.send_modal(LevelModal(metier_choisi))
+
+# 3. La Vue (Le conteneur qui porte le menu)
+class JobView(ui.View):
+    def __init__(self):
+        super().__init__(timeout=None) # timeout=None est CRUCIAL pour que le bouton reste actif tout le temps
+        self.add_item(JobSelect())
+
+# --- LE BOT ---
+class DofusBot(commands.Bot):
+    def __init__(self):
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        super().__init__(command_prefix="!", intents=intents)
+
+    async def setup_hook(self):
+        # Important : On recharge la vue au démarrage pour qu'elle continue de marcher après un reboot
+        self.add_view(JobView())
+        await self.tree.sync()
+        print("Commandes et Vues synchronisées !")
+
+client = DofusBot()
+
+# --- COMMANDES ---
+
+# Commande ADMIN pour faire apparaître le panneau
+@client.tree.command(name="panel", description="[Admin] Affiche le panneau des métiers")
+@app_commands.default_permissions(administrator=True) # Seul un admin peut poser le panneau
+async def spawn_panel(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🛠️ Gestion de vos Métiers",
+        description="Sélectionnez votre métier dans la liste ci-dessous pour mettre à jour votre niveau.\n\n*Votre niveau sera sauvegardé et vous recevrez le rôle correspondant.*",
+        color=0x00ff00
+    )
+    embed.set_thumbnail(url="https://upload.wikimedia.org/wikipedia/fr/3/30/Dofus_Logo.png") # Logo Dofus optionnel
+    
+    await interaction.channel.send(embed=embed, view=JobView())
+    await interaction.response.send_message("Panneau créé !", ephemeral=True)
+
+# Commande pour voir l'équipe (inchangée)
+@client.tree.command(name="team", description="Affiche les métiers de toute l'équipe")
+async def show_team(interaction: discord.Interaction):
     data = load_data()
-    
-    if user_id not in data:
-        data[user_id] = {}
-    
-    # On enregistre le niveau
-    data[user_id][nom_metier] = niveau
-    save_data(data)
+    if not data:
+        await interaction.response.send_message("❌ Personne n'a encore enregistré de métier.", ephemeral=True)
+        return
 
-    await interaction.response.send_message(f"✅ **{nom_metier}** mis à jour au niveau **{niveau}** ! Tu as reçu le rôle correspondant.", ephemeral=True)
+    embed = discord.Embed(title="🛡️ L'équipe des Artisans", description="Voici les compétences du groupe :", color=0xFFA500)
+    count = 0
+    for user_id, jobs in data.items():
+        member = interaction.guild.get_member(int(user_id))
+        if member:
+            count += 1
+            description = ""
+            sorted_jobs = sorted(jobs.items(), key=lambda x: x[1], reverse=True)
+            for metier, niveau in sorted_jobs:
+                icone = "⭐" if niveau == 200 else "🔹"
+                description += f"{icone} **{metier}** : {niveau}\n"
+            embed.add_field(name=f"👤 {member.display_name}", value=description or "Aucun", inline=True)
 
+    if count == 0:
+        await interaction.response.send_message("❌ Aucun artisan trouvé sur le serveur.", ephemeral=True)
+    else:
+        await interaction.response.send_message(embed=embed)
 
+# Commande Profil (inchangée)
 @client.tree.command(name="profil", description="Affiche les métiers d'un joueur")
 async def show_profil(interaction: discord.Interaction, membre: discord.Member = None):
-    # Si aucun membre n'est précisé, on prend l'auteur de la commande
     target = membre or interaction.user
     user_id = str(target.id)
-    
     data = load_data()
 
     if user_id not in data or not data[user_id]:
         await interaction.response.send_message(f"😕 {target.display_name} n'a pas encore enregistré de métiers.", ephemeral=True)
         return
 
-    # Création d'un joli Embed (Carte de visite)
     embed = discord.Embed(title=f"🛠️ Livre des artisans : {target.display_name}", color=0x00ff00)
     embed.set_thumbnail(url=target.avatar.url if target.avatar else None)
-
     description = ""
-    # On trie les métiers par niveau décroissant (les 200 en premier)
     sorted_jobs = sorted(data[user_id].items(), key=lambda x: x[1], reverse=True)
-
     for metier, niveau in sorted_jobs:
         icone = "⭐" if niveau == 200 else "🔹"
         description += f"{icone} **{metier}** : Niv. {niveau}\n"
-
     embed.description = description
-    await interaction.response.send_message(embed=embed)
-
-
-@client.tree.command(name="team", description="Affiche les métiers de toute l'équipe")
-async def show_team(interaction: discord.Interaction):
-    data = load_data()
-
-    if not data:
-        await interaction.response.send_message("❌ Personne n'a encore enregistré de métier.", ephemeral=True)
-        return
-
-    # On prépare un joli tableau
-    embed = discord.Embed(title="🛡️ L'équipe des Artisans", description="Voici les compétences du groupe :", color=0xFFA500)
-    
-    # Compteur pour savoir si on a trouvé des gens
-    count = 0
-
-    # On parcourt chaque joueur enregistré dans le fichier JSON
-    for user_id, jobs in data.items():
-        # On essaie de retrouver le membre sur le serveur
-        member = interaction.guild.get_member(int(user_id))
-
-        # Si le membre est bien sur le serveur (et pas parti)
-        if member:
-            count += 1
-            description = ""
-            
-            # On trie ses métiers (les 200 en haut)
-            sorted_jobs = sorted(jobs.items(), key=lambda x: x[1], reverse=True)
-
-            # On formate le texte (Max 5 métiers par personne pour pas faire trop long, modifiable)
-            for metier, niveau in sorted_jobs:
-                icone = "⭐" if niveau == 200 else "🔹"
-                description += f"{icone} **{metier}** : {niveau}\n"
-
-            if description == "":
-                description = "Pas de métier enregistré"
-
-            # On ajoute une case dans le tableau pour ce joueur
-            # inline=True permet de les mettre côte à côte
-            embed.add_field(name=f"👤 {member.display_name}", value=description, inline=True)
-
-    if count == 0:
-        await interaction.response.send_message("❌ Aucun artisan trouvé sur le serveur.", ephemeral=True)
-    else:
-        # Note : J'ai mis ephemeral=False ici pour que tout le monde puisse voir l'équipe
-        # Si tu veux que ce soit privé, change False en True
-        await interaction.response.send_message(embed=embed, ephemeral=False)
-
-
-
-# --- NOUVELLE COMMANDE : RECHERCHE ---
-@client.tree.command(name="recherche", description="Trouve des artisans avec un niveau minimum")
-@app_commands.describe(nom_metier="Quel métier cherches-tu ?", niveau_min="Niveau minimum requis")
-@app_commands.choices(nom_metier=[
-    app_commands.Choice(name=m, value=m) for m in METIERS_DOFUS
-])
-async def search_artisan(interaction: discord.Interaction, nom_metier: str, niveau_min: int):
-    data = load_data()
-    
-    # On prépare la liste des résultats
-    resultats = []
-
-    # On parcourt tous les joueurs
-    for user_id, jobs in data.items():
-        # Si le joueur a le métier ET le niveau requis
-        if nom_metier in jobs and jobs[nom_metier] >= niveau_min:
-            member = interaction.guild.get_member(int(user_id))
-            if member: # On vérifie qu'il est toujours sur le serveur
-                resultats.append((member, jobs[nom_metier]))
-
-    if not resultats:
-        await interaction.response.send_message(f"❌ Aucun **{nom_metier}** de niveau {niveau_min}+ trouvé.", ephemeral=True)
-        return
-
-    # On trie la liste du plus haut niveau au plus bas
-    resultats.sort(key=lambda x: x[1], reverse=True)
-
-    # Création de l'affichage
-    embed = discord.Embed(
-        title=f"🔍 Recherche : {nom_metier} (Niv. {niveau_min}+)",
-        color=0x3498db
-    )
-
-    description = ""
-    for member, niveau in resultats:
-        icone = "⭐" if niveau == 200 else "🔹"
-        # On mentionne le joueur pour qu'on puisse cliquer sur son profil
-        description += f"{icone} **{niveau}** - {member.mention}\n"
-
-    embed.description = description
-    await interaction.response.send_message(embed=embed)
-
-
-# --- NOUVELLE COMMANDE : OUBLIER ---
-@client.tree.command(name="oublier", description="Supprime un métier de ton profil")
-@app_commands.describe(nom_metier="Le métier à oublier")
-@app_commands.choices(nom_metier=[
-    app_commands.Choice(name=m, value=m) for m in METIERS_DOFUS
-])
-async def forget_job(interaction: discord.Interaction, nom_metier: str):
-    user_id = str(interaction.user.id)
-    data = load_data()
-
-    # Vérification : Est-ce qu'il a ce métier ?
-    if user_id not in data or nom_metier not in data[user_id]:
-        await interaction.response.send_message(f"🤔 Tu n'as pas enregistré le métier **{nom_metier}**.", ephemeral=True)
-        return
-
-    # 1. Suppression dans la base de données (JSON)
-    del data[user_id][nom_metier]
-    
-    # Si le joueur n'a plus aucun métier, on nettoie son entrée
-    if not data[user_id]:
-        del data[user_id]
-        
-    save_data(data)
-
-    # 2. Suppression du Rôle Discord
-    role = discord.utils.get(interaction.guild.roles, name=nom_metier)
-    if role and role in interaction.user.roles:
-        try:
-            await interaction.user.remove_roles(role)
-        except discord.Forbidden:
-            # Si le bot n'a pas la permission, on continue quand même (pas grave)
-            pass
-
-    await interaction.response.send_message(f"🗑️ Le métier **{nom_metier}** a été retiré de ton profil et le rôle supprimé.", ephemeral=True)
-
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 client.run(TOKEN)
