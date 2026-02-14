@@ -11,10 +11,10 @@ if os.path.exists("/app/data"):
     FICHIER_SAUVEGARDE = "/app/data/artisans.json"
 # Liste des métiers valides sur Dofus (pour éviter les fautes de frappe)
 METIERS_DOFUS = [
-    "Paysan", "Boulanger", "Alchimiste", "Bûcheron", "Mineur", 
+    "Paysan", "Alchimiste", "Bûcheron", "Mineur", 
     "Chasseur", "Pêcheur", "Bricoleur", "Bijoutier", "Cordonnier", 
     "Tailleur", "Forgeron", "Sculpteur", "Joaillomage", "Cordomage", 
-    "Costumage", "Forgemage", "Sculptemage", "Façonneur"
+    "Costumage", "Forgemage", "Sculptemage", "Façonneur", "Façomage"
 ]
 
 # --- INITIALISATION ---
