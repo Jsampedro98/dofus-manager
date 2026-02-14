@@ -167,4 +167,85 @@ async def show_team(interaction: discord.Interaction):
         # Si tu veux que ce soit privé, change False en True
         await interaction.response.send_message(embed=embed, ephemeral=False)
 
+
+
+# --- NOUVELLE COMMANDE : RECHERCHE ---
+@client.tree.command(name="recherche", description="Trouve des artisans avec un niveau minimum")
+@app_commands.describe(nom_metier="Quel métier cherches-tu ?", niveau_min="Niveau minimum requis")
+@app_commands.choices(nom_metier=[
+    app_commands.Choice(name=m, value=m) for m in METIERS_DOFUS
+])
+async def search_artisan(interaction: discord.Interaction, nom_metier: str, niveau_min: int):
+    data = load_data()
+    
+    # On prépare la liste des résultats
+    resultats = []
+
+    # On parcourt tous les joueurs
+    for user_id, jobs in data.items():
+        # Si le joueur a le métier ET le niveau requis
+        if nom_metier in jobs and jobs[nom_metier] >= niveau_min:
+            member = interaction.guild.get_member(int(user_id))
+            if member: # On vérifie qu'il est toujours sur le serveur
+                resultats.append((member, jobs[nom_metier]))
+
+    if not resultats:
+        await interaction.response.send_message(f"❌ Aucun **{nom_metier}** de niveau {niveau_min}+ trouvé.", ephemeral=True)
+        return
+
+    # On trie la liste du plus haut niveau au plus bas
+    resultats.sort(key=lambda x: x[1], reverse=True)
+
+    # Création de l'affichage
+    embed = discord.Embed(
+        title=f"🔍 Recherche : {nom_metier} (Niv. {niveau_min}+)",
+        color=0x3498db
+    )
+
+    description = ""
+    for member, niveau in resultats:
+        icone = "⭐" if niveau == 200 else "🔹"
+        # On mentionne le joueur pour qu'on puisse cliquer sur son profil
+        description += f"{icone} **{niveau}** - {member.mention}\n"
+
+    embed.description = description
+    await interaction.response.send_message(embed=embed)
+
+
+# --- NOUVELLE COMMANDE : OUBLIER ---
+@client.tree.command(name="oublier", description="Supprime un métier de ton profil")
+@app_commands.describe(nom_metier="Le métier à oublier")
+@app_commands.choices(nom_metier=[
+    app_commands.Choice(name=m, value=m) for m in METIERS_DOFUS
+])
+async def forget_job(interaction: discord.Interaction, nom_metier: str):
+    user_id = str(interaction.user.id)
+    data = load_data()
+
+    # Vérification : Est-ce qu'il a ce métier ?
+    if user_id not in data or nom_metier not in data[user_id]:
+        await interaction.response.send_message(f"🤔 Tu n'as pas enregistré le métier **{nom_metier}**.", ephemeral=True)
+        return
+
+    # 1. Suppression dans la base de données (JSON)
+    del data[user_id][nom_metier]
+    
+    # Si le joueur n'a plus aucun métier, on nettoie son entrée
+    if not data[user_id]:
+        del data[user_id]
+        
+    save_data(data)
+
+    # 2. Suppression du Rôle Discord
+    role = discord.utils.get(interaction.guild.roles, name=nom_metier)
+    if role and role in interaction.user.roles:
+        try:
+            await interaction.user.remove_roles(role)
+        except discord.Forbidden:
+            # Si le bot n'a pas la permission, on continue quand même (pas grave)
+            pass
+
+    await interaction.response.send_message(f"🗑️ Le métier **{nom_metier}** a été retiré de ton profil et le rôle supprimé.", ephemeral=True)
+
+
 client.run(TOKEN)
