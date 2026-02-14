@@ -7,7 +7,8 @@ import os
 # --- CONFIGURATION ---
 TOKEN = os.getenv('DISCORD_TOKEN')
 FICHIER_SAUVEGARDE = 'artisans.json'
-
+if os.path.exists("/app/data"):
+    FICHIER_SAUVEGARDE = "/app/data/artisans.json"
 # Liste des métiers valides sur Dofus (pour éviter les fautes de frappe)
 METIERS_DOFUS = [
     "Paysan", "Boulanger", "Alchimiste", "Bûcheron", "Mineur", 
